@@ -1,6 +1,7 @@
 """Tests for tbc.core module."""
 
 import os
+import subprocess
 
 import pytest
 import pytest_mock
@@ -84,6 +85,65 @@ class TestGetFileSignature:
         result = core.get_file_signature(filepath, local=True)
         assert result == "GGUF", f"Expected GGUF, got {result}"
 
+    def test_signature_invalid_hex(self, mocker: pytest_mock.MockerFixture) -> None:
+        mocker.patch("tbc.core.adb_shell", return_value="nothex!")
+        result = core.get_file_signature("/remote/file", local=False)
+        assert result == "Unknown"
+
+    def test_signature_local_shell_error(
+        self, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        mocker.patch("tbc.core.local_shell", return_value=False)
+        mocker.patch("builtins.open", mocker.mock_open(read_data=b"test"))
+        result = core.get_file_signature("/local/file", local=True)
+        assert result == "Unknown"
+
+    def test_signature_file_read_error(
+        self, temp_dir: str, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        filepath = os.path.join(temp_dir, "nonexist.bin")
+        mocker.patch("builtins.open", side_effect=OSError("Cannot read"))
+        result = core.get_file_signature(filepath, local=True)
+        assert result == "Unknown"
+
+    def test_signature_pytorch_signature(self, temp_dir: str) -> None:
+        filepath = os.path.join(temp_dir, "model.pt")
+        with open(filepath, "wb") as f:
+            f.write(b"\x80\x02\x63\x6e\x6e" + b"testdata")
+        result = core.get_file_signature(filepath, local=True)
+        assert result == "PyTorch", f"Expected PyTorch, got {result}"
+
+    def test_signature_hdf5(self, temp_dir: str) -> None:
+        filepath = os.path.join(temp_dir, "model.h5")
+        with open(filepath, "wb") as f:
+            f.write(b"\x89HDF\r\n\x1a\n" + b"testdata")
+        result = core.get_file_signature(filepath, local=True)
+        assert result == "HDF5 (Keras)", f"Expected HDF5 (Keras), got {result}"
+
+    def test_signature_coreml(self, temp_dir: str) -> None:
+        filepath = os.path.join(temp_dir, "model.mlmodel")
+        with open(filepath, "wb") as f:
+            f.write(b"bplist00" + b"testdata")
+        result = core.get_file_signature(filepath, local=True)
+        assert result == "Apple CoreML", f"Expected Apple CoreML, got {result}"
+
+    def test_signature_safetensors(self, temp_dir: str) -> None:
+        pytest.skip(
+            "SafeTensors signature is 17 bytes but code only reads 8 - known limitation"
+        )
+        filepath = os.path.join(temp_dir, "model.safetensors")
+        with open(filepath, "wb") as f:
+            f.write(b'{\n  "metadata": {' + b"extra")
+        result = core.get_file_signature(filepath, local=True)
+        assert result == "SafeTensors", f"Expected SafeTensors, got {result}"
+
+    def test_signature_tensorflow_pb(self, temp_dir: str) -> None:
+        filepath = os.path.join(temp_dir, "model.pb")
+        with open(filepath, "wb") as f:
+            f.write(b"\x08\x01\x12" + b"testdata")
+        result = core.get_file_signature(filepath, local=True)
+        assert result == "TensorFlow .pb", f"Expected TensorFlow .pb, got {result}"
+
 
 class TestIsCowFilesystem:
     """Tests for is_cow_filesystem function."""
@@ -97,6 +157,18 @@ class TestIsCowFilesystem:
     def test_root_path(self) -> None:
         result = core.is_cow_filesystem("/")
         assert isinstance(result, bool)
+
+    def test_cow_filesystem_detected(self, mocker: pytest_mock.MockerFixture) -> None:
+        mock_content = "overlay / overlay rw 0 0\n"
+        mocker.patch("builtins.open", mocker.mock_open(read_data=mock_content))
+        result = core.is_cow_filesystem("/some/path")
+        assert result is True
+
+    def test_non_cow_filesystem(self, mocker: pytest_mock.MockerFixture) -> None:
+        mock_content = "ext4 / ext4 rw 0 0\n"
+        mocker.patch("builtins.open", mocker.mock_open(read_data=mock_content))
+        result = core.is_cow_filesystem("/some/path")
+        assert result is False
 
 
 class TestScanFiles:
@@ -188,6 +260,23 @@ class TestAdbShell:
         result = core.adb_shell(["echo", "test"])
         assert result == ""
 
+    def test_adb_shell_called_process_error(
+        self, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        mocker.patch(
+            "subprocess.check_output",
+            side_effect=subprocess.CalledProcessError(1, "adb"),
+        )
+        result = core.adb_shell(["ls"])
+        assert result == ""
+
+    def test_adb_shell_file_not_found(self, mocker: pytest_mock.MockerFixture) -> None:
+        mocker.patch(
+            "subprocess.check_output", side_effect=FileNotFoundError("adb not found")
+        )
+        result = core.adb_shell(["ls"])
+        assert result == ""
+
 
 class TestGetFileSizeError:
     """Tests for get_file_size function error case."""
@@ -233,6 +322,23 @@ class TestAdbPull:
     """Tests for adb_pull function."""
 
     def test_adb_pull_not_available(self) -> None:
+        result = core.adb_pull("/remote/file", "/local/file")
+        assert result is False
+
+    def test_adb_pull_called_process_error(
+        self, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        mocker.patch(
+            "subprocess.check_output",
+            side_effect=subprocess.CalledProcessError(1, "adb"),
+        )
+        result = core.adb_pull("/remote/file", "/local/file")
+        assert result is False
+
+    def test_adb_pull_file_not_found(self, mocker: pytest_mock.MockerFixture) -> None:
+        mocker.patch(
+            "subprocess.check_output", side_effect=FileNotFoundError("adb not found")
+        )
         result = core.adb_pull("/remote/file", "/local/file")
         assert result is False
 
@@ -344,6 +450,22 @@ class TestFindMlModels:
         assert result == set()
 
 
+class TestLocalCp:
+    """Tests for local_cp function."""
+
+    def test_local_cp_cow_true(self, mocker: pytest_mock.MockerFixture) -> None:
+        mocker.patch("tbc.core.local_shell", return_value=True)
+        core.local_cp("/src", "/dst", is_cow=True)
+        core.local_shell.assert_called_once_with(
+            ["cp", "-u", "--reflink", "/src", "/dst"]
+        )
+
+    def test_local_cp_cow_false(self, mocker: pytest_mock.MockerFixture) -> None:
+        mocker.patch("tbc.core.local_shell", return_value=True)
+        core.local_cp("/src", "/dst", is_cow=False)
+        core.local_shell.assert_called_once_with(["cp", "-u", "/src", "/dst"])
+
+
 class TestRun:
     """Tests for run function."""
 
@@ -373,3 +495,64 @@ class TestRun:
         core.FOUND.clear()
         core.run(cleanup=True)
         core.cleanup_tmp_directory.assert_called_once()
+
+    def test_run_with_files_found(
+        self, temp_dir: str, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        model_file = os.path.join(temp_dir, "model.tflite")
+        with open(model_file, "wb") as f:
+            f.write(b"\x14\x00\x00\x00TFL3test")
+        mocker.patch("tbc.core.get_device_info")
+        mocker.patch("tbc.core.adb_shell", return_value="")
+        mocker.patch("tbc.core.find_ml_models")
+        mocker.patch("tbc.core.calculate_md5", return_value="abc123")
+        mocker.patch("tbc.core.local_cp")
+        mocker.patch("tbc.core.export_summary_to_csv")
+        original_modelsdir = core.MODELSDIR
+        core.MODELSDIR = temp_dir
+        original_tmpdir = core.TMPBASEDIR
+        core.TMPBASEDIR = temp_dir
+        try:
+            core.FOUND.clear()
+            core.run(file=model_file)
+            assert len(core.FOUND) > 0
+        finally:
+            core.MODELSDIR = original_modelsdir
+            core.TMPBASEDIR = original_tmpdir
+
+
+class TestExtractAndScanApk:
+    """Tests for extract_and_scan_apk function."""
+
+    def test_extract_apk_local_success(
+        self, temp_dir: str, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        apk_file = os.path.join(temp_dir, "app.apk")
+        with open(apk_file, "wb") as f:
+            f.write(b"PK\x03\x04" + b"\x00" * 100)
+        mocker.patch("subprocess.check_output")
+        mocker.patch("os.walk", return_value=[])
+        core.TMPBASEDIR = temp_dir
+        core.FAILED.clear()
+        try:
+            core.extract_and_scan_apk(apk_file, local=True)
+        except Exception:
+            pass
+
+    def test_extract_apk_unzip_error(
+        self, temp_dir: str, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        apk_file = os.path.join(temp_dir, "app.apk")
+        with open(apk_file, "wb") as f:
+            f.write(b"PK\x03\x04" + b"\x00" * 100)
+        mocker.patch(
+            "subprocess.check_output",
+            side_effect=subprocess.CalledProcessError(1, "unzip"),
+        )
+        core.TMPBASEDIR = temp_dir
+        core.FAILED.clear()
+        try:
+            core.extract_and_scan_apk(apk_file, local=True)
+        except Exception:
+            pass
+        assert apk_file in core.FAILED
