@@ -1,78 +1,77 @@
-# TBC
+# The Brain Collector
 
-The Brain Collector: is a Python script designed to search for machine learning model weight files on an Android device via ADB. It scans common directories for known ML model file extensions and signatures and can also extract APK files to analyze their contents.
+> A tool to scan Android devices for ML model weight files via ADB.
 
-## Features
-- Scans Android devices for ML model files.
-- Supports various model file formats, including .tflite, .onnx, .pt, .pb, .h5, and more.
-- Detects files based on extensions and magic byte signatures.
-- Extracts APK files and searches for embedded ML models.
-- Provides device information such as serial number, model, and manufacturer.
-- Displays file size in a human-readable format.
-- Supports local file scanning as well.
-- Cleanup functionality: Optionally cleans up the tmp/ directory after execution.
+[![PyPI](https://img.shields.io/pypi/v/thebraincollector.svg)](https://pypi.org/project/thebraincollector/)
+[![Python](https://img.shields.io/pypi/pyversions/thebraincollector.svg)](https://pypi.org/project/thebraincollector/)
+[![Coverage](https://codecov.io/gh/dclavijo/TBC/branch/main/graph/badge.svg)](https://codecov.io/gh/dclavijo/TBC)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
-## Prerequisites
-- Python 3.x
-- ADB (Android Debug Bridge) installed and added to system PATH.
-- Required Python modules: colorama, argparse.
-- A connected Android device with ADB debugging enabled.
+## Install
 
-## Installation
-1. Clone the repository or download the script.
-2. Install dependencies using:
-   ```bash
-   pip install colorama
-   ```
-3. Ensure ADB is installed and accessible:
-   ```bash
-   adb devices
-   ```
+```bash
+pip install thebraincollector
+```
 
 ## Usage
-Run the script to scan for ML models on a connected device:
+
+```python
+from tbc import find_ml_models, get_device_info
+
+# Get device information
+info = get_device_info()
+print(f"Device: {info['model']}")
+
+# Find ML models on connected device
+models = find_ml_models()
+```
+
+## CLI
+
 ```bash
-$ python TBC.py
-usage: TBC.py [-h] [--file FILE] [--local-dir LOCAL_DIR] [--export-csv EXPORT_CSV] [--cleanup]
-
-Search for ML models on an Android device.
-
-options:
-  -h, --help            show this help message and exit
-  --file FILE           Specify a single file to scan.
-  --local-dir LOCAL_DIR
-                        Specify a local directory to scan for APKs and ML models.
-  --export-csv EXPORT_CSV
-                        Specify a filename to export the summary to CSV.
-  --cleanup             Clean up the tmp/ directory after execution.
-
+tbc --help
+tbc --file /path/to/file
+tbc --local-dir /path/to/dir
+tbc --export-csv results.csv --cleanup
 ```
 
-To scan a specific file:
+## API
+
+### `get_device_info() -> dict`
+Returns device serial number, model, and manufacturer.
+
+### `find_ml_models() -> set`
+Searches connected Android device for ML model files.
+
+### `scan_files(files: list[str], local: bool = False) -> None`
+Scans files for ML model or APK extensions.
+
+### `human_readable_size(size_bytes: int) -> str`
+Converts bytes to human-readable format.
+
+### `calculate_md5(file_path: str) -> str | None`
+Calculates MD5 hash of a file.
+
+## Development
+
 ```bash
-$ python TBC.py --file /path/to/file
-```
+git clone https://github.com/dclavijo/TBC.git
+cd TBC
+pip install -e ".[test]"
 
-## How It Works
-1. The script retrieves device information using ADB.
-2. It searches predefined directories for known ML model file extensions.
-3. If an APK file is found, it is extracted and scanned for embedded models.
-4. Found models are displayed with their file size and detected format.
-5. If the --cleanup flag is provided, the tmp/ directory is cleaned up after execution.
+# run tests
+pytest
 
-## Example Output
-```
-[*] Device Information:
-    Serial Number: XYZ12345
-    Model: Pixel 6
-    Manufacturer: Google
+# format
+ruff format src/ tests/
 
-[*] Searching for ML model files on the device...
-[+] Found possible ML Model: /sdcard/Download/model.tflite (12.3 MB) [Type: TFlite]
+# lint
+ruff check src/ tests/
+
+# type check
+mypy src/
 ```
 
 ## License
-This project is licensed under the MIT License.
 
-## Disclaimer
-This tool is for educational and research purposes only. Use it responsibly and ensure you have permission before scanning any device.
+MIT License - see LICENSE file for details.
